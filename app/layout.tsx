@@ -4,6 +4,7 @@ import './globals.css'
 import Navbar from '@/components/navbar/Navbar'
 import Container from '@/components/global/Container'
 import Providers from './providers'
+import { ClerkProvider } from '@clerk/nextjs'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
@@ -14,17 +15,19 @@ export const metadata: Metadata = {
 // prettier-ignore
 export default function RootLayout({children,}: Readonly<{children: React.ReactNode}>) {
   return (
+<ClerkProvider>
     <html lang='en' suppressHydrationWarning>
       <body className={inter.className}>
         {/* under the hood we use 
             react context api here 
             to pass down props classes and ifno
-        */} 
+            */} 
         <Providers>
           <Navbar />
           <Container className='py-20'>{children}</Container>
         </Providers>
       </body>
     </html>
+</ClerkProvider>
   )
 }
