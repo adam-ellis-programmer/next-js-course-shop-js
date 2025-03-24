@@ -1,11 +1,15 @@
-import { Button } from '@/components/ui/button'
-
-const HomePage = () => {
+import FeaturedProducts from '@/components/home/FeaturedProducts'
+import Hero from '@/components/home/Hero'
+import LoadingContainer from '@/components/global/LoadingContainer'
+import { Suspense } from 'react'
+function HomPage() {
   return (
-    <div>
-      Home Page
-      <Button variant='outline'>click me</Button>
-    </div>
+    <>
+      <Hero />
+      <Suspense fallback={<LoadingContainer />}>
+        <FeaturedProducts />
+      </Suspense>
+    </>
   )
 }
-export default HomePage
+export default HomPage
