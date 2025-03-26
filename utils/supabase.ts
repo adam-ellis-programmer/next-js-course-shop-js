@@ -20,3 +20,12 @@ export const uploadImage = async (image: File) => {
   if (!data) throw new Error('Image upload failed')
   return supabase.storage.from(bucket).getPublicUrl(newName).data.publicUrl
 }
+
+// https://images.pexels.com/photos/943150/pexels-photo-943150.jpeg?auto=compress&cs=tinysrgb&w=1600
+
+export const deleteImage = (url: string) => {
+  const imageName = url.split('/').pop()
+  // to stop type script complaining
+  if (!imageName) throw new Error('Invalid URL')
+  return supabase.storage.from(bucket).remove([imageName])
+}

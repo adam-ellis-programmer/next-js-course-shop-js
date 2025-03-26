@@ -5,15 +5,31 @@ import { redirect } from 'next/navigation'
 import {
   imageSchema,
   productSchema,
+  reviewSchema,
   validateWithZodSchema,
 } from '@/utils/schemas'
-import { uploadImage } from './supabase'
+import { deleteImage, uploadImage } from './supabase'
+import { revalidatePath } from 'next/cache'
+
+// const getAuthUser = async () => {
+//   const user = await currentUser()
+//   if (!user) {
+//     throw new Error('You must be logged in to access this route')
+//   }
+//   return user
+// }
 
 const getAuthUser = async () => {
   const user = await currentUser()
-  if (!user) {
-    throw new Error('You must be logged in to access this route')
-  }
+  // if no usere redirect
+  if (!user) redirect('/')
+  return user
+}
+
+// middleware but this is an extra check
+const getAdminUser = async () => {
+  const user = await getAuthUser()
+  if (user.id !== process.env.ADMIN_USER_ID) redirect('/')
   return user
 }
 
@@ -105,3 +121,196 @@ export const createProductAction = async (
   }
   redirect('/admin/products')
 }
+
+// get admin user is extra check
+export const fetchAdminProducts = async () => {
+  await getAdminUser()
+  const products = await db.product.findMany({
+    orderBy: {
+      createdAt: 'desc',
+    },
+  })
+  return products
+}
+
+// to pass info to our action we can use
+// :-- bind method
+// :-- hidden input
+
+export const deleteProductAction = async (prevState: { productId: string }) => {
+  const { productId } = prevState
+  console.log('PREV-STATE:--->', prevState)
+
+  await getAdminUser()
+
+  try {
+    const product = await db.product.delete({
+      where: {
+        id: productId,
+      },
+    })
+    await deleteImage(product.image)
+    revalidatePath('/admin/products')
+    return { message: 'product removed' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+export const fetchAdminProductDetails = async (productId: string) => {
+  await getAdminUser()
+  const product = await db.product.findUnique({
+    where: {
+      id: productId,
+    },
+  })
+  if (!product) redirect('/admin/products')
+  return product
+}
+
+export const updateProductAction = async (
+  prevState: any,
+  formData: FormData
+) => {
+  await getAdminUser()
+  try {
+    const productId = formData.get('id') as string
+    const rawData = Object.fromEntries(formData)
+
+    // validate all fields in the update
+    const validatedFields = validateWithZodSchema(productSchema, rawData)
+
+    await db.product.update({
+      where: {
+        id: productId,
+      },
+      data: {
+        ...validatedFields,
+      },
+    })
+    revalidatePath(`/admin/products/${productId}/edit`)
+    return { message: 'Product updated successfully' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+export const updateProductImageAction = async (
+  prevState: any,
+  formData: FormData
+) => {
+  await getAuthUser()
+  try {
+    const image = formData.get('image') as File
+    const productId = formData.get('id') as string
+    const oldImageUrl = formData.get('url') as string
+    console.log('OLD IMAGE--->', oldImageUrl)
+    const validatedFile = validateWithZodSchema(imageSchema, { image })
+    const fullPath = await uploadImage(validatedFile.image)
+
+    await deleteImage(oldImageUrl)
+    await db.product.update({
+      where: {
+        id: productId,
+      },
+      data: {
+        image: fullPath,
+      },
+    })
+    revalidatePath(`/admin/products/${productId}/edit`)
+    return { message: 'Product Image updated successfully' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+// is the product in the favorives or not
+export const fetchFavoriteId = async ({ productId }: { productId: string }) => {
+  const user = await getAuthUser()
+  console.log('PRODUCT ID:__>', productId)
+  const favorite = await db.favorite.findFirst({
+    where: {
+      productId,
+      clerkId: user.id,
+    },
+    // for response only select and return id
+    select: {
+      id: true,
+    },
+  })
+  return favorite?.id || null
+}
+
+export const toggleFavoriteAction = async (prevState: {
+  productId: string
+  favoriteId: string | null
+  pathname: string
+}) => {
+  const user = await getAuthUser()
+  const { productId, favoriteId, pathname } = prevState
+  try {
+    if (favoriteId) {
+      await db.favorite.delete({
+        where: {
+          id: favoriteId,
+        },
+      })
+    } else {
+      await db.favorite.create({
+        data: {
+          productId,
+          clerkId: user.id,
+        },
+      })
+    }
+    revalidatePath(pathname)
+    return { message: favoriteId ? 'Removed from Faves' : 'Added to Faves' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+export const fetchUserFavorites = async () => {
+  const user = await getAuthUser()
+  const favorites = await db.favorite.findMany({
+    where: {
+      clerkId: user.id,
+    },
+    // we have the relationship - query favorites
+    // and get the actual product
+    // as we have connected the models we can:
+    include: {
+      product: true,
+    },
+  })
+  return favorites
+}
+
+export const createReviewAction = async (
+  prevState: any,
+  formData: FormData
+) => {
+  const user = await getAuthUser()
+  try {
+    const rawData = Object.fromEntries(formData)
+
+    const validatedFields = validateWithZodSchema(reviewSchema, rawData)
+
+    await db.review.create({
+      data: {
+        ...validatedFields,
+        clerkId: user.id,
+      },
+    })
+    revalidatePath(`/products/${validatedFields.productId}`)
+    return { message: 'Review submitted successfully' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+export const fetchProductReviews = async () => {}
+export const fetchProductReviewsByUser = async () => {}
+export const deleteReviewAction = async () => {}
+export const findExistingReview = async () => {}
+export const fetchProductRating = async () => {}
