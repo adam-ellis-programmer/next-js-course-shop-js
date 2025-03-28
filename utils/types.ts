@@ -1,3 +1,12 @@
+import { Prisma } from '@prisma/client'
+
+// we construct a new type
+// < is generic
+// we need the product model aswell as the cart item
+export type CartItemWithProduct = Prisma.CartItemGetPayload<{
+  include: { product: true }
+}>
+
 export type actionFunction = (
   prevState: any,
   formData: FormData

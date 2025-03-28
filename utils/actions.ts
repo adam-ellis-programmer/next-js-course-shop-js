@@ -405,6 +405,7 @@ export const fetchCartItems = async () => {
   return cart?.numItemsInCart || 0
 }
 
+// check if there is a product (used for reliable price)
 const fetchProduct = async (productId: string) => {
   const product = await db.product.findUnique({
     where: {
@@ -418,27 +419,229 @@ const fetchProduct = async (productId: string) => {
   return product
 }
 
-export const fetchOrCreateCart = async () => {}
+const includeProductClause = {
+  cartItems: {
+    include: {
+      product: true,
+    },
+  },
+}
+/**
+ *
+ */
+export const fetchOrCreateCart = async ({
+  userId,
+  errorOnFailure = false,
+}: {
+  userId: string
+  errorOnFailure?: boolean
+}) => {
+  let cart = await db.cart.findFirst({
+    where: {
+      clerkId: userId,
+    },
+    include: includeProductClause,
+  })
 
-const updateOrCreateCartItem = async () => {}
+  // errorOnFailure stops the creation of a new cart
+  // ** defensive programming technique **
+  // errorOnFailure used in delete cart funciton
+  if (!cart && errorOnFailure) {
+    throw new Error('Cart not found')
+  }
 
-export const updateCart = async () => {}
+  // if no cart then create one
+  if (!cart) {
+    cart = await db.cart.create({
+      data: {
+        clerkId: userId,
+      },
+      include: includeProductClause,
+    })
+  }
 
+  return cart
+}
+
+// *****
+
+const updateOrCreateCartItem = async ({
+  productId,
+  cartId,
+  amount,
+}: {
+  productId: string
+  cartId: string
+  amount: number
+}) => {
+  let cartItem = await db.cartItem.findFirst({
+    // match both
+    where: {
+      productId,
+      cartId,
+    },
+  })
+
+  // check and update
+  if (cartItem) {
+    cartItem = await db.cartItem.update({
+      where: {
+        id: cartItem.id,
+      },
+      data: {
+        // whatever amount + new amout
+        amount: cartItem.amount + amount,
+      },
+    })
+  } else {
+    cartItem = await db.cartItem.create({
+      data: { amount, productId, cartId },
+    })
+  }
+}
+
+// always go back to the database for the data
+// not some value from the f/e as more secure
+// if we update the price in the d/b we get the most up to date price
+// match the cart model
+import { Cart } from '@prisma/client'
+
+// just iterating over the items LEFT in the cart
+// *** PRISMA RETURNS THE UPDATED ITEM AS THE LAST ONE ***
+export const updateCart = async (cart: Cart) => {
+  const cartItems = await db.cartItem.findMany({
+    where: {
+      cartId: cart.id,
+    },
+    include: {
+      product: true, // Include the related product
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  })
+
+  let numItemsInCart = 0
+  let cartTotal = 0
+
+  for (const item of cartItems) {
+    numItemsInCart += item.amount
+    cartTotal += item.amount * item.product.price
+  }
+
+  const tax = cart.taxRate * cartTotal
+  // if above zero else zero
+  const shipping = cartTotal ? cart.shipping : 0
+  const orderTotal = cartTotal + tax + shipping
+
+  const currentCart = await db.cart.update({
+    where: {
+      id: cart.id,
+    },
+
+    data: {
+      numItemsInCart,
+      cartTotal,
+      tax,
+      orderTotal,
+    },
+    include: includeProductClause,
+  })
+  // return currentCart
+  // ** bug fix **
+  return { currentCart, cartItems }
+}
+
+/**
+ * each user has one cart
+ * after the purchase we delete the whole cart
+ * we check if there is a cart or we create a new one from scratch
+ */
 export const addToCartAction = async (prevState: any, formData: FormData) => {
   const user = await getAuthUser()
   try {
     const productId = formData.get('productId') as string
     const amount = Number(formData.get('amount'))
+    // fetch (check) product to use price from the database
     await fetchProduct(productId)
-    // const cart = await fetchOrCreateCart({ userId: user.id })
-    // await updateOrCreateCartItem({ productId, cartId: cart.id, amount })
-    // await updateCart(cart)
+    // 1: fetch cart
+    const cart = await fetchOrCreateCart({ userId: user.id })
+    // 2: update that cart
+    await updateOrCreateCartItem({ productId, cartId: cart.id, amount })
+    // 3:
+    await updateCart(cart)
   } catch (error) {
     return renderError(error)
   }
   redirect('/cart')
 }
 
-export const removeCartItemAction = async () => {}
+export const removeCartItemAction = async (
+  prevState: any,
+  formData: FormData
+) => {
+  const user = await getAuthUser()
+  try {
+    const cartItemId = formData.get('id') as string
 
-export const updateCartItemAction = async () => {}
+    const cart = await fetchOrCreateCart({
+      userId: user.id,
+      // used a a safe guard to not create a new cart
+      errorOnFailure: true,
+    })
+
+    await db.cartItem.delete({
+      where: {
+        id: cartItemId,
+        cartId: cart.id,
+      },
+    })
+
+    // call update cart to update the values for the server to show in the dom
+    // updateCart: --> item now removed from the cart
+    await updateCart(cart)
+    revalidatePath('/cart')
+    return { message: 'Item removed from cart' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+// not called in the Form container
+export const updateCartItemAction = async ({
+  amount,
+  cartItemId,
+}: {
+  amount: number
+  cartItemId: string
+}) => {
+  const user = await getAuthUser()
+
+  try {
+    const cart = await fetchOrCreateCart({
+      userId: user.id,
+      // extra check so we do not create a new cart (edge case)
+      errorOnFailure: true,
+    })
+
+    await db.cartItem.update({
+      where: {
+        id: cartItemId,
+        cartId: cart.id,
+      },
+      data: {
+        amount,
+      },
+    })
+    // jsut updates the latest values
+    await updateCart(cart)
+    revalidatePath('/cart')
+    return { message: 'cart updated' }
+  } catch (error) {
+    return renderError(error)
+  }
+}
+
+export const createOrderAction = async (prevState: any, formData: FormData) => {
+  return { message: 'order created' }
+}
